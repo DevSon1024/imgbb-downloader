@@ -1,6 +1,8 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'about_page.dart';
 import 'app_settings_page.dart';
+import 'privacy_policy_page.dart';
 import 'storage_setting_page.dart';
 
 class MenuPage extends StatelessWidget {
@@ -16,17 +18,31 @@ class MenuPage extends StatelessWidget {
         padding: const EdgeInsets.all(16.0),
         children: [
           _buildMenuItem(
-            context: context, // Corrected
+            context: context,
             icon: CupertinoIcons.settings,
             title: 'App Settings',
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AppSettingsPage())),
           ),
           const SizedBox(height: 12),
           _buildMenuItem(
-            context: context, // Corrected
+            context: context,
             icon: CupertinoIcons.folder,
             title: 'Storage Settings',
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StorageSettingPage())),
+          ),
+          const SizedBox(height: 12),
+          _buildMenuItem(
+            context: context,
+            icon: CupertinoIcons.info,
+            title: 'About App',
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AboutPage())),
+          ),
+          const SizedBox(height: 12),
+          _buildMenuItem(
+            context: context,
+            icon: CupertinoIcons.lock_shield,
+            title: 'Privacy Policy',
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PrivacyPolicyPage())),
           ),
         ],
       ),
