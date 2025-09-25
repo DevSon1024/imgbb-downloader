@@ -23,6 +23,7 @@ class DownloadTask {
 class DownloadService with ChangeNotifier {
   final Dio _dio = Dio();
   final List<DownloadTask> _tasks = [];
+  static const _downloadedLinksKey = 'downloaded_links';
 
   List<DownloadTask> get tasks => _tasks;
 
@@ -38,6 +39,21 @@ class DownloadService with ChangeNotifier {
     // Fallback to default documents directory if custom path is not set or invalid
     final defaultDir = await getApplicationDocumentsDirectory();
     return defaultDir.path;
+  }
+
+  Future<bool> isDuplicateDownload(String url) async {
+    final prefs = await SharedPreferences.getInstance();
+    final downloadedLinks = prefs.getStringList(_downloadedLinksKey) ?? [];
+    return downloadedLinks.contains(url);
+  }
+
+  Future<void> _logDownload(String url) async {
+    final prefs = await SharedPreferences.getInstance();
+    final downloadedLinks = prefs.getStringList(_downloadedLinksKey) ?? [];
+    if (!downloadedLinks.contains(url)) {
+      downloadedLinks.add(url);
+      await prefs.setStringList(_downloadedLinksKey, downloadedLinks);
+    }
   }
 
   Future<void> startDownload(String url) async {
@@ -73,6 +89,7 @@ class DownloadService with ChangeNotifier {
       );
 
       task.status = DownloadStatus.completed;
+      _logDownload(task.url); // Log the download
       notifyListeners();
 
       Future.delayed(const Duration(seconds: 4), () {

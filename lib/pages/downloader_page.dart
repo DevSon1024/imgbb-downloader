@@ -16,6 +16,7 @@ class _DownloaderPageState extends State<DownloaderPage> {
   InAppWebViewController? _webViewController;
   String? _statusMessage;
   bool _isScraping = false;
+  bool _isDownloading = false; // Add this flag
 
   @override
   void initState() {
@@ -25,7 +26,7 @@ class _DownloaderPageState extends State<DownloaderPage> {
         _webViewController = controller;
       },
       onLoadStop: (controller, url) async {
-        if (url != null && url.toString() != "about:blank") {
+        if (url != null && url.toString() != "about:blank" && !_isDownloading) { // Check the flag
           await _extractImageLink(controller);
         }
       },
@@ -67,9 +68,11 @@ class _DownloaderPageState extends State<DownloaderPage> {
     }
 
     setState(() {
+      _isDownloading = false; // Reset the flag
       _isScraping = true;
       _statusMessage = "Scraping page for download link...";
     });
+
 
     try {
       if (!(_headlessWebView?.isRunning() ?? false)) {
@@ -94,6 +97,9 @@ class _DownloaderPageState extends State<DownloaderPage> {
   }
 
   Future<void> _extractImageLink(InAppWebViewController controller) async {
+    setState(() {
+      _isDownloading = true; // Set the flag
+    });
     await Future.delayed(const Duration(seconds: 3));
     final html = await controller.getHtml();
 
@@ -114,20 +120,30 @@ class _DownloaderPageState extends State<DownloaderPage> {
     if (match != null) {
       final downloadUrl = match.group(0)!;
       final downloadService = context.read<DownloadService>();
-      downloadService.startDownload(downloadUrl);
+      final isDuplicate = await downloadService.isDuplicateDownload(downloadUrl);
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: const Text("Download started!"),
-          action: SnackBarAction(
-            label: "View",
-            onPressed: () {
-              if (Navigator.canPop(context)) {
-                Navigator.of(context).pop('view_downloads');
-              }
-            },
-          ),
-        ));
+      if (isDuplicate) {
+        if(mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text("This image has already been downloaded."),
+          ));
+        }
+      } else {
+        downloadService.startDownload(downloadUrl);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: const Text("Download started!"),
+            action: SnackBarAction(
+              label: "View",
+              onPressed: () {
+                if (Navigator.canPop(context)) {
+                  Navigator.of(context).pop('view_downloads');
+                }
+              },
+            ),
+          ));
+        }
       }
     } else {
       _statusMessage = "Download link not found.";
