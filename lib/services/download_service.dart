@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
@@ -27,18 +28,37 @@ class DownloadService with ChangeNotifier {
 
   List<DownloadTask> get tasks => _tasks;
 
-  Future<String> _getDownloadPath() async {
-    final prefs = await SharedPreferences.getInstance();
-    final customPath = prefs.getString('downloadPath');
-    if (customPath != null && customPath.isNotEmpty) {
-      final dir = Directory(customPath);
-      if (await dir.exists()) {
-        return customPath;
+  Future<String?> _getDownloadPath() async {
+    Directory? directory;
+    try {
+      if (Platform.isIOS) {
+        directory = await getApplicationDocumentsDirectory();
+      } else {
+        if (await _requestPermission(Permission.storage)) {
+          Directory? downloadsDir = await getDownloadsDirectory();
+          if (downloadsDir != null) {
+            directory = Directory('${downloadsDir.path}/IMGbb Downloads');
+          }
+        } else {
+          return null;
+        }
+      }
+    } catch (err) {
+      print("Cannot get download directory: $err");
+    }
+    return directory?.path;
+  }
+
+  Future<bool> _requestPermission(Permission permission) async {
+    if (await permission.isGranted) {
+      return true;
+    } else {
+      var result = await permission.request();
+      if (result == PermissionStatus.granted) {
+        return true;
       }
     }
-    // Fallback to default documents directory if custom path is not set or invalid
-    final defaultDir = await getApplicationDocumentsDirectory();
-    return defaultDir.path;
+    return false;
   }
 
   Future<bool> isDuplicateDownload(String url) async {
@@ -58,8 +78,11 @@ class DownloadService with ChangeNotifier {
 
   Future<void> startDownload(String url) async {
     final downloadPath = await _getDownloadPath();
+    if (downloadPath == null) {
+      // Handle permission denied
+      return;
+    }
     final fileName = url.split('/').last;
-    // Ensure the directory exists
     await Directory(downloadPath).create(recursive: true);
     final savePath = '$downloadPath/$fileName';
     final task =
@@ -89,7 +112,7 @@ class DownloadService with ChangeNotifier {
       );
 
       task.status = DownloadStatus.completed;
-      _logDownload(task.url); // Log the download
+      _logDownload(task.url);
       notifyListeners();
 
       Future.delayed(const Duration(seconds: 4), () {

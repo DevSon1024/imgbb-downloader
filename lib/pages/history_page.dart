@@ -3,6 +3,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:open_file/open_file.dart';
 import 'package:intl/intl.dart';
@@ -68,32 +69,49 @@ class _HistoryPageState extends State<HistoryPage> with WidgetsBindingObserver {
       _isLoading = true;
     });
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final defaultPath = (await getApplicationDocumentsDirectory()).path;
-      final downloadPath = prefs.getString('downloadPath') ?? defaultPath;
-
-      final directory = Directory(downloadPath);
-      if (await directory.exists()) {
-        final files = directory
-            .listSync()
-            .whereType<File>()
-            .where((file) => [
-          '.jpg',
-          '.jpeg',
-          '.png',
-          '.gif',
-          '.webp'
-        ].any((ext) => file.path.toLowerCase().endsWith(ext)))
-            .toList();
-
-        files.sort(
-                (a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
-
-        if (mounted) {
+      Directory? directory;
+      if (Platform.isIOS) {
+        directory = await getApplicationDocumentsDirectory();
+      } else {
+        if (await _requestPermission(Permission.storage) &&
+            await _requestPermission(Permission.manageExternalStorage)) {
+          Directory? downloadsDir = await getDownloadsDirectory();
+          if (downloadsDir != null) {
+            directory = Directory('${downloadsDir.path}/IMGbb Downloads');
+          }
+        } else {
           setState(() {
-            _images = files;
+            _isLoading = false;
           });
-          _generateThumbnails();
+          return;
+        }
+      }
+
+      if (directory != null) {
+        final downloadPath = directory.path;
+        final dir = Directory(downloadPath);
+        if (await dir.exists()) {
+          final files = dir
+              .listSync()
+              .whereType<File>()
+              .where((file) => [
+            '.jpg',
+            '.jpeg',
+            '.png',
+            '.gif',
+            '.webp'
+          ].any((ext) => file.path.toLowerCase().endsWith(ext)))
+              .toList();
+
+          files.sort(
+                  (a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+
+          if (mounted) {
+            setState(() {
+              _images = files;
+            });
+            _generateThumbnails();
+          }
         }
       }
     } catch (e) {
@@ -105,6 +123,18 @@ class _HistoryPageState extends State<HistoryPage> with WidgetsBindingObserver {
         });
       }
     }
+  }
+
+  Future<bool> _requestPermission(Permission permission) async {
+    if (await permission.isGranted) {
+      return true;
+    } else {
+      var result = await permission.request();
+      if (result == PermissionStatus.granted) {
+        return true;
+      }
+    }
+    return false;
   }
 
   void _generateThumbnails() {
@@ -133,6 +163,10 @@ class _HistoryPageState extends State<HistoryPage> with WidgetsBindingObserver {
       appBar: AppBar(
         title: const Text('History'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadImages,
+          ),
           IconButton(
             icon: Icon(_isGridView ? Icons.view_list : Icons.grid_view),
             onPressed: () {

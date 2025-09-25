@@ -20,7 +20,7 @@ dependencies:
   uuid: ^4.4.0
   file_picker: ^8.0.0+1
   shared_preferences: ^2.2.3
-  image: ^4.5.4
+  image: ^4.0.17
   open_file: ^3.3.2
   intl: ^0.19.0
   hive: ^2.2.3
@@ -30,6 +30,14 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
+  flutter_launcher_icons: "^0.13.1" # Add this line
+
+flutter_icons:
+  android: "ic_launcher"
+  ios: true
+  image_path: "assets/icon/icon.png" # You can point this to your highest resolution icon
+  min_sdk_android: 21 # optional
+
 
 flutter:
   uses-material-design: true
