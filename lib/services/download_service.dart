@@ -53,7 +53,6 @@ class DownloadService with ChangeNotifier {
       );
 
       task.status = DownloadStatus.completed;
-      // Remove from active downloads list after a short delay
       Future.delayed(const Duration(seconds: 2), () {
         _tasks.removeWhere((t) => t.id == task.id);
         notifyListeners();
@@ -86,12 +85,10 @@ class DownloadService with ChangeNotifier {
     final task = _tasks.firstWhere((t) => t.id == taskId);
     task.progress = 0.0;
     task.errorMessage = null;
-    task.cancelToken = CancelToken(); // Get a new token for the new request
+    task.cancelToken = CancelToken();
     _download(task);
   }
 
-  // Note: True pause/resume is complex and requires server support for Range headers.
-  // This implementation simulates it by cancelling and restarting.
   void pauseDownload(String taskId) {
     final task = _tasks.firstWhere((t) => t.id == taskId);
     task.cancelToken.cancel('Download paused');
@@ -102,6 +99,6 @@ class DownloadService with ChangeNotifier {
   void resumeDownload(String taskId) {
     final task = _tasks.firstWhere((t) => t.id == taskId);
     task.cancelToken = CancelToken();
-    _download(task); // This will restart the download
+    _download(task);
   }
 }
