@@ -7,9 +7,12 @@ import 'pages/history_page.dart';
 import 'pages/menu_page.dart';
 import 'pages/downloads_page.dart';
 import 'services/download_service.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Hive.initFlutter();
+  await Hive.openBox('thumbnails');
   runApp(
     MultiProvider(
       providers: [
@@ -49,7 +52,6 @@ class ImgBBDownloaderApp extends StatelessWidget {
   }
 }
 
-// ... MainScreen and NavigationItem classes remain the same as the previous correct version ...
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
   @override
@@ -87,10 +89,18 @@ class _MainScreenState extends State<MainScreen> {
   ];
 
   final List<NavigationItem> _navItems = [
-    NavigationItem(icon: Icons.home_outlined, activeIcon: Icons.home, label: 'Home'),
-    NavigationItem(icon: Icons.download_for_offline_outlined, activeIcon: Icons.download_for_offline, label: 'Downloads'),
-    NavigationItem(icon: Icons.history_outlined, activeIcon: Icons.history, label: 'History'),
-    NavigationItem(icon: Icons.menu, activeIcon: Icons.menu_open, label: 'Menu'),
+    NavigationItem(
+        icon: Icons.home_outlined, activeIcon: Icons.home, label: 'Home'),
+    NavigationItem(
+        icon: Icons.download_for_offline_outlined,
+        activeIcon: Icons.download_for_offline,
+        label: 'Downloads'),
+    NavigationItem(
+        icon: Icons.history_outlined,
+        activeIcon: Icons.history,
+        label: 'History'),
+    NavigationItem(
+        icon: Icons.menu, activeIcon: Icons.menu_open, label: 'Menu'),
   ];
 
   @override
@@ -162,7 +172,9 @@ class _MainScreenState extends State<MainScreen> {
             Icon(
               isSelected ? item.activeIcon : item.icon,
               size: 24,
-              color: isSelected ? theme.colorScheme.primary : theme.colorScheme.onSurface.withOpacity(0.6),
+              color: isSelected
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.onSurface.withOpacity(0.6),
             ),
             const SizedBox(height: 4),
             Text(
@@ -170,7 +182,9 @@ class _MainScreenState extends State<MainScreen> {
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                color: isSelected ? theme.colorScheme.primary : theme.colorScheme.onSurface.withOpacity(0.6),
+                color: isSelected
+                    ? theme.colorScheme.primary
+                    : theme.colorScheme.onSurface.withOpacity(0.6),
               ),
             ),
           ],
