@@ -63,7 +63,6 @@ class _DownloaderPageState extends State<DownloaderPage> {
         await _headlessWebView?.run();
       }
 
-      // Corrected: Added a null check for the webViewController
       if (_webViewController != null) {
         await _webViewController!.loadUrl(
           urlRequest: URLRequest(url: WebUri(url)),
@@ -110,16 +109,9 @@ class _DownloaderPageState extends State<DownloaderPage> {
           action: SnackBarAction(
             label: "View",
             onPressed: () {
-              // This relies on the PageController being available via Provider
-              // which we will set up in main.dart
-              try {
-                Provider.of<PageController>(context, listen: false).animateToPage(
-                  1, // Index of DownloadsPage
-                  duration: const Duration(milliseconds: 300),
-                  curve: Curves.easeInOut,
-                );
-              } catch (e) {
-                print("Could not navigate to downloads page: $e");
+              // Corrected: Pop this page and send a result back to MainScreen
+              if (Navigator.canPop(context)) {
+                Navigator.of(context).pop('view_downloads');
               }
             },
           ),

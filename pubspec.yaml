@@ -18,6 +18,8 @@ dependencies:
   device_info_plus: ^9.1.2
   provider: ^6.1.2
   uuid: ^4.4.0
+  file_picker: ^8.0.0+1
+  shared_preferences: ^2.2.3
 
 dev_dependencies:
   flutter_test:

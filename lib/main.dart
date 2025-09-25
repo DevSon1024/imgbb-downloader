@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'services/theme_notifier.dart';
 import 'pages/home_page.dart';
 import 'pages/downloader_page.dart';
 import 'pages/history_page.dart';
@@ -7,23 +8,14 @@ import 'pages/menu_page.dart';
 import 'pages/downloads_page.dart';
 import 'services/download_service.dart';
 
-// Data class for navigation items
-class NavigationItem {
-  final IconData icon;
-  final IconData activeIcon;
-  final String label;
-
-  NavigationItem({
-    required this.icon,
-    required this.activeIcon,
-    required this.label,
-  });
-}
-
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(
-    ChangeNotifierProvider(
-      create: (context) => DownloadService(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (context) => DownloadService()),
+        ChangeNotifierProvider(create: (context) => ThemeNotifier()),
+      ],
       child: const ImgBBDownloaderApp(),
     ),
   );
@@ -34,39 +26,58 @@ class ImgBBDownloaderApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'ImgBB Downloader',
-      theme: ThemeData(
-        primarySwatch: Colors.deepPurple,
-        useMaterial3: true,
-        brightness: Brightness.light,
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-      ),
-      darkTheme: ThemeData(
-        brightness: Brightness.dark,
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurple,
-          brightness: Brightness.dark,
-        ),
-      ),
-      themeMode: ThemeMode.system,
-      home: const MainScreen(),
-      debugShowCheckedModeBanner: false,
+    return Consumer<ThemeNotifier>(
+      builder: (context, themeNotifier, child) {
+        return MaterialApp(
+          title: 'ImgBB Downloader',
+          theme: ThemeData(
+            primarySwatch: Colors.deepPurple,
+            useMaterial3: true,
+            brightness: Brightness.light,
+          ),
+          darkTheme: ThemeData(
+            brightness: Brightness.dark,
+            primarySwatch: Colors.deepPurple,
+            useMaterial3: true,
+          ),
+          themeMode: themeNotifier.themeMode,
+          home: const MainScreen(),
+          debugShowCheckedModeBanner: false,
+        );
+      },
     );
   }
 }
 
+// ... MainScreen and NavigationItem classes remain the same as the previous correct version ...
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
   @override
   State<MainScreen> createState() => _MainScreenState();
 }
 
-class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
+class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
   late final PageController _pageController;
-  late final AnimationController _fabAnimationController;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController(initialPage: _selectedIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _onNavItemTapped(int index) {
+    setState(() {
+      _selectedIndex = index;
+    });
+    _pageController.jumpToPage(index);
+  }
 
   final List<Widget> _pages = [
     const HomePage(),
@@ -79,36 +90,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     NavigationItem(icon: Icons.home_outlined, activeIcon: Icons.home, label: 'Home'),
     NavigationItem(icon: Icons.download_for_offline_outlined, activeIcon: Icons.download_for_offline, label: 'Downloads'),
     NavigationItem(icon: Icons.history_outlined, activeIcon: Icons.history, label: 'History'),
-    NavigationItem(icon: Icons.menu, activeIcon: Icons.menu, label: 'Menu'),
+    NavigationItem(icon: Icons.menu, activeIcon: Icons.menu_open, label: 'Menu'),
   ];
-
-  @override
-  void initState() {
-    super.initState();
-    _pageController = PageController(initialPage: _selectedIndex);
-    _fabAnimationController = AnimationController(
-      duration: const Duration(milliseconds: 200),
-      vsync: this,
-    );
-  }
-
-  @override
-  void dispose() {
-    _pageController.dispose();
-    _fabAnimationController.dispose();
-    super.dispose();
-  }
-
-  void _onNavItemTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
-    });
-    _pageController.animateToPage(
-      index,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOut,
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -125,8 +108,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         children: _pages,
       ),
       bottomNavigationBar: Container(
-        margin: const EdgeInsets.all(16),
-        height: 80,
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        height: 70,
         decoration: BoxDecoration(
           color: theme.colorScheme.surface,
           borderRadius: BorderRadius.circular(24),
@@ -149,7 +132,17 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           ],
         ),
       ),
-      floatingActionButton: _buildModernFAB(),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () async {
+          final result = await Navigator.of(context).push(MaterialPageRoute(
+            builder: (context) => const DownloaderPage(),
+          ));
+          if (result == 'view_downloads' && mounted) {
+            _onNavItemTapped(1);
+          }
+        },
+        child: const Icon(Icons.add),
+      ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
     );
   }
@@ -168,7 +161,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           children: [
             Icon(
               isSelected ? item.activeIcon : item.icon,
-              size: isSelected ? 26 : 24,
+              size: 24,
               color: isSelected ? theme.colorScheme.primary : theme.colorScheme.onSurface.withOpacity(0.6),
             ),
             const SizedBox(height: 4),
@@ -185,24 +178,16 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       ),
     );
   }
+}
 
-  Widget _buildModernFAB() {
-    final theme = Theme.of(context);
-    return FloatingActionButton(
-      heroTag: 'main_fab',
-      backgroundColor: theme.colorScheme.primary,
-      foregroundColor: theme.colorScheme.onPrimary,
-      elevation: 4,
-      onPressed: () async {
-        final result = await Navigator.of(context).push(MaterialPageRoute(
-          builder: (context) => const DownloaderPage(),
-        ));
-        if (result == 'view_downloads' && mounted) {
-          _onNavItemTapped(1); // Navigate to Downloads page
-        }
-      },
-      shape: const CircleBorder(),
-      child: const Icon(Icons.add_rounded, size: 28),
-    );
-  }
+class NavigationItem {
+  final IconData icon;
+  final IconData activeIcon;
+  final String label;
+
+  NavigationItem({
+    required this.icon,
+    required this.activeIcon,
+    required this.label,
+  });
 }

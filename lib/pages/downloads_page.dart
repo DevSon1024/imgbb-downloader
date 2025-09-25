@@ -54,7 +54,19 @@ class DownloadItem extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             if (task.status == DownloadStatus.downloading || task.status == DownloadStatus.paused)
-              LinearProgressIndicator(value: task.progress),
+              Column(
+                children: [
+                  LinearProgressIndicator(value: task.progress),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('${(task.progress * 100).toStringAsFixed(0)}%'),
+                      Text(task.speed),
+                    ],
+                  )
+                ],
+              ),
             if (task.status == DownloadStatus.failed)
               Text('Error: ${task.errorMessage}', style: const TextStyle(color: Colors.red)),
             if (task.status == DownloadStatus.completed)

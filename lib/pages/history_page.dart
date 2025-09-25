@@ -1,127 +1,93 @@
-import 'package:flutter/material.dart';
 import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class HistoryPage extends StatefulWidget {
   const HistoryPage({super.key});
 
   @override
-  _HistoryPageState createState() => _HistoryPageState();
+  State<HistoryPage> createState() => _HistoryPageState();
 }
 
-class _HistoryPageState extends State<HistoryPage> {
+class _HistoryPageState extends State<HistoryPage> with WidgetsBindingObserver {
   List<File> _images = [];
-  String _sortOption = 'Newest to Oldest';
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadImages();
   }
 
-  Future<void> _loadImages() async {
-    const downloadsPath = '/storage/emulated/0/Download/IMGbb Downloaded/';
-    final directory = Directory(downloadsPath);
-    if (await directory.exists()) {
-      final files = directory
-          .listSync()
-          .whereType<File>()
-          .where((file) => file.path.endsWith('.jpg') ||
-          file.path.endsWith('.jpeg') ||
-          file.path.endsWith('.png') ||
-          file.path.endsWith('.gif') ||
-          file.path.endsWith('.webp'))
-          .toList();
-      setState(() {
-        _images = files.cast<File>();
-        _sortImages();
-      });
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadImages();
     }
   }
 
-  void _sortImages() {
-    setState(() {
-      switch (_sortOption) {
-        case 'Newest to Oldest':
-          _images.sort((a, b) => b.statSync().modified.compareTo(a.statSync().modified));
-          break;
-        case 'Oldest to Newest':
-          _images.sort((a, b) => a.statSync().modified.compareTo(b.statSync().modified));
-          break;
-        case 'Largest to Smallest':
-          _images.sort((a, b) => b.statSync().size.compareTo(a.statSync().size));
-          break;
-        case 'Smallest to Largest':
-          _images.sort((a, b) => a.statSync().size.compareTo(b.statSync().size));
-          break;
+  Future<void> _loadImages() async {
+    setState(() { _isLoading = true; });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final defaultPath = (await getApplicationDocumentsDirectory()).path;
+      final downloadPath = prefs.getString('downloadPath') ?? defaultPath;
+
+      final directory = Directory(downloadPath);
+      if (await directory.exists()) {
+        final files = directory.listSync()
+            .whereType<File>()
+            .where((file) => ['.jpg', '.jpeg', '.png', '.gif', '.webp'].any((ext) => file.path.toLowerCase().endsWith(ext)))
+            .toList();
+
+        files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+
+        if (mounted) {
+          setState(() {
+            _images = files;
+          });
+        }
       }
-    });
+    } catch (e) {
+      print("Error loading images: $e");
+    } finally {
+      if (mounted) {
+        setState(() { _isLoading = false; });
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: DropdownButton<String>(
-            value: _sortOption,
-            isExpanded: true,
-            items: const [
-              DropdownMenuItem(value: 'Newest to Oldest', child: Text('Newest to Oldest')),
-              DropdownMenuItem(value: 'Oldest to Newest', child: Text('Oldest to Newest')),
-              DropdownMenuItem(value: 'Largest to Smallest', child: Text('Largest to Smallest')),
-              DropdownMenuItem(value: 'Smallest to Largest', child: Text('Smallest to Largest')),
-            ],
-            onChanged: (value) {
-              if (value != null) {
-                setState(() {
-                  _sortOption = value;
-                  _sortImages();
-                });
-              }
-            },
+    return Scaffold(
+      appBar: AppBar(title: const Text('History')),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+        onRefresh: _loadImages,
+        child: _images.isEmpty
+            ? const Center(child: Text('No downloaded images found.'))
+            : GridView.builder(
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            crossAxisSpacing: 4,
+            mainAxisSpacing: 4,
           ),
+          padding: const EdgeInsets.all(4),
+          itemCount: _images.length,
+          itemBuilder: (context, index) {
+            return Image.file(_images[index], fit: BoxFit.cover);
+          },
         ),
-        Expanded(
-          child: _images.isEmpty
-              ? const Center(child: Text('No images downloaded yet'))
-              : GridView.builder(
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              crossAxisSpacing: 8,
-              mainAxisSpacing: 8,
-            ),
-            padding: const EdgeInsets.all(8),
-            itemCount: _images.length,
-            itemBuilder: (context, index) {
-              final file = _images[index];
-              return Card(
-                elevation: 2,
-                child: Column(
-                  children: [
-                    Expanded(
-                      child: Image.file(
-                        file,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) =>
-                        const Icon(Icons.error),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.all(4.0),
-                      child: Text(
-                        file.path.split('/').last,
-                        style: const TextStyle(fontSize: 12),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        ),
-      ],
+      ),
     );
   }
 }
