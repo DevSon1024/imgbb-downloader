@@ -29,6 +29,12 @@ class DownloadService with ChangeNotifier {
   List<DownloadTask> get tasks => _tasks;
 
   Future<String?> _getDownloadPath() async {
+    final prefs = await SharedPreferences.getInstance();
+    final customPath = prefs.getString('downloadPath');
+    if (customPath != null) {
+      return customPath;
+    }
+
     Directory? directory;
     try {
       if (Platform.isIOS) {

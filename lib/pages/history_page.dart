@@ -69,8 +69,12 @@ class _HistoryPageState extends State<HistoryPage> with WidgetsBindingObserver {
       _isLoading = true;
     });
     try {
+      final prefs = await SharedPreferences.getInstance();
+      final customPath = prefs.getString('downloadPath');
       Directory? directory;
-      if (Platform.isIOS) {
+      if (customPath != null) {
+        directory = Directory(customPath);
+      } else if (Platform.isIOS) {
         directory = await getApplicationDocumentsDirectory();
       } else {
         if (await _requestPermission(Permission.storage) &&
@@ -88,8 +92,7 @@ class _HistoryPageState extends State<HistoryPage> with WidgetsBindingObserver {
       }
 
       if (directory != null) {
-        final downloadPath = directory.path;
-        final dir = Directory(downloadPath);
+        final dir = directory;
         if (await dir.exists()) {
           final files = dir
               .listSync()
