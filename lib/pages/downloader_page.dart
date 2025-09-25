@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:provider/provider.dart';
 import '../services/download_service.dart';
@@ -37,12 +38,24 @@ class _DownloaderPageState extends State<DownloaderPage> {
         }
       },
     );
+    _pasteFromClipboard();
   }
 
   @override
   void dispose() {
     _headlessWebView?.dispose();
     super.dispose();
+  }
+
+  Future<void> _pasteFromClipboard() async {
+    final clipboardData = await Clipboard.getData('text/plain');
+    if (clipboardData != null && clipboardData.text != null) {
+      if (clipboardData.text!.startsWith("https://ibb.co/")) {
+        setState(() {
+          _urlController.text = clipboardData.text!;
+        });
+      }
+    }
   }
 
   Future<void> _startScraping() async {
@@ -71,7 +84,7 @@ class _DownloaderPageState extends State<DownloaderPage> {
         throw Exception("WebView controller is not available.");
       }
     } catch (e) {
-      if(mounted) {
+      if (mounted) {
         setState(() {
           _isScraping = false;
           _statusMessage = "Error: $e";
@@ -85,7 +98,7 @@ class _DownloaderPageState extends State<DownloaderPage> {
     final html = await controller.getHtml();
 
     if (html == null) {
-      if(mounted) {
+      if (mounted) {
         setState(() {
           _isScraping = false;
           _statusMessage = "Could not get page content.";
@@ -103,13 +116,12 @@ class _DownloaderPageState extends State<DownloaderPage> {
       final downloadService = context.read<DownloadService>();
       downloadService.startDownload(downloadUrl);
 
-      if(mounted) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: const Text("Download started!"),
           action: SnackBarAction(
             label: "View",
             onPressed: () {
-              // Corrected: Pop this page and send a result back to MainScreen
               if (Navigator.canPop(context)) {
                 Navigator.of(context).pop('view_downloads');
               }
@@ -117,18 +129,20 @@ class _DownloaderPageState extends State<DownloaderPage> {
           ),
         ));
       }
-
     } else {
       _statusMessage = "Download link not found.";
     }
 
-    if(mounted) {
-      setState(() { _isScraping = false; });
+    if (mounted) {
+      setState(() {
+        _isScraping = false;
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(title: const Text('New Download')),
       body: SingleChildScrollView(
@@ -138,14 +152,34 @@ class _DownloaderPageState extends State<DownloaderPage> {
             children: [
               TextField(
                 controller: _urlController,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: "Enter ImgBB Page URL",
-                  border: OutlineInputBorder(),
+                  border: const OutlineInputBorder(),
+                  suffixIcon: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.paste),
+                        onPressed: _pasteFromClipboard,
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
+                          _urlController.clear();
+                        },
+                      ),
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(height: 20),
               ElevatedButton(
                 onPressed: _isScraping ? null : _startScraping,
+                style: ElevatedButton.styleFrom(
+                  padding:
+                  const EdgeInsets.symmetric(horizontal: 50, vertical: 15),
+                  textStyle: const TextStyle(fontSize: 18),
+                ),
                 child: _isScraping
                     ? const CircularProgressIndicator(color: Colors.white)
                     : const Text("Get Download Link"),

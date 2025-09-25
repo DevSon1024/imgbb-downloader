@@ -16,9 +16,6 @@ class DownloadTask {
   DownloadStatus status = DownloadStatus.downloading;
   CancelToken cancelToken = CancelToken();
   String? errorMessage;
-  String speed = "0 KB/s";
-  int _lastBytes = 0;
-  Timer? _speedTimer;
 
   DownloadTask({required this.id, required this.url, required this.savePath});
 }
@@ -49,25 +46,13 @@ class DownloadService with ChangeNotifier {
     // Ensure the directory exists
     await Directory(downloadPath).create(recursive: true);
     final savePath = '$downloadPath/$fileName';
-    final task = DownloadTask(id: const Uuid().v4(), url: url, savePath: savePath);
+    final task =
+    DownloadTask(id: const Uuid().v4(), url: url, savePath: savePath);
 
     _tasks.add(task);
     notifyListeners();
 
     _download(task);
-  }
-
-  void _calculateSpeed(DownloadTask task, int receivedBytes) {
-    task._speedTimer ??= Timer.periodic(const Duration(seconds: 1), (timer) {
-      final speedInBytes = receivedBytes - task._lastBytes;
-      task._lastBytes = receivedBytes;
-      if (speedInBytes > 1024 * 1024) {
-        task.speed = '${(speedInBytes / (1024 * 1024)).toStringAsFixed(2)} MB/s';
-      } else {
-        task.speed = '${(speedInBytes / 1024).toStringAsFixed(2)} KB/s';
-      }
-      notifyListeners();
-    });
   }
 
   Future<void> _download(DownloadTask task) async {
@@ -82,13 +67,11 @@ class DownloadService with ChangeNotifier {
         onReceiveProgress: (received, total) {
           if (total != -1 && task.status == DownloadStatus.downloading) {
             task.progress = received / total;
-            _calculateSpeed(task, received);
             notifyListeners();
           }
         },
       );
 
-      task._speedTimer?.cancel();
       task.status = DownloadStatus.completed;
       notifyListeners();
 
@@ -96,9 +79,7 @@ class DownloadService with ChangeNotifier {
         _tasks.removeWhere((t) => t.id == task.id);
         notifyListeners();
       });
-
     } on DioException catch (e) {
-      task._speedTimer?.cancel();
       if (e.type == DioExceptionType.cancel) {
         task.status = DownloadStatus.failed;
         task.errorMessage = 'Download cancelled';
@@ -107,7 +88,6 @@ class DownloadService with ChangeNotifier {
         task.errorMessage = 'Download failed';
       }
     } catch (e) {
-      task._speedTimer?.cancel();
       task.status = DownloadStatus.failed;
       task.errorMessage = 'An unknown error occurred.';
     } finally {
@@ -118,7 +98,6 @@ class DownloadService with ChangeNotifier {
   void cancelDownload(String taskId) {
     final task = _tasks.firstWhere((t) => t.id == taskId);
     task.cancelToken.cancel();
-    task._speedTimer?.cancel();
     _tasks.removeWhere((t) => t.id == taskId);
     notifyListeners();
   }
@@ -127,7 +106,6 @@ class DownloadService with ChangeNotifier {
     final task = _tasks.firstWhere((t) => t.id == taskId);
     task.progress = 0.0;
     task.errorMessage = null;
-    task._lastBytes = 0;
     task.cancelToken = CancelToken();
     _download(task);
   }
@@ -135,7 +113,6 @@ class DownloadService with ChangeNotifier {
   void pauseDownload(String taskId) {
     final task = _tasks.firstWhere((t) => t.id == taskId);
     task.cancelToken.cancel('Download paused');
-    task._speedTimer?.cancel();
     task.status = DownloadStatus.paused;
     notifyListeners();
   }
