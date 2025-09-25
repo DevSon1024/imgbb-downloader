@@ -1,26 +1,20 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:dio/dio.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:device_info_plus/device_info_plus.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:provider/provider.dart';
+import '../services/download_service.dart';
 
 class DownloaderPage extends StatefulWidget {
   const DownloaderPage({super.key});
-
   @override
   State<DownloaderPage> createState() => _DownloaderPageState();
 }
 
 class _DownloaderPageState extends State<DownloaderPage> {
   final TextEditingController _urlController = TextEditingController();
-  bool _isDownloading = false;
-  double _progress = 0.0;
-  String? _statusMessage;
   HeadlessInAppWebView? _headlessWebView;
   InAppWebViewController? _webViewController;
+  String? _statusMessage;
+  bool _isScraping = false;
 
   @override
   void initState() {
@@ -28,20 +22,17 @@ class _DownloaderPageState extends State<DownloaderPage> {
     _headlessWebView = HeadlessInAppWebView(
       onWebViewCreated: (controller) {
         _webViewController = controller;
-        print("Headless WebView created!");
       },
       onLoadStop: (controller, url) async {
-        print("Headless WebView loaded: $url");
-        if (url.toString() != "about:blank") {
-          await _extractAndDownloadImage(controller, url.toString());
+        if (url != null && url.toString() != "about:blank") {
+          await _extractImageLink(controller);
         }
       },
       onLoadError: (controller, url, code, message) {
-        print("Error loading page: $message");
         if (mounted) {
           setState(() {
-            _isDownloading = false;
-            _statusMessage = "Error: Failed to load page.";
+            _isScraping = false;
+            _statusMessage = "Error loading page: $message";
           });
         }
       },
@@ -51,175 +42,129 @@ class _DownloaderPageState extends State<DownloaderPage> {
   @override
   void dispose() {
     _headlessWebView?.dispose();
-    _urlController.dispose();
     super.dispose();
   }
 
-  Future<void> _startDownloadProcess() async {
+  Future<void> _startScraping() async {
     final url = _urlController.text.trim();
     if (url.isEmpty || !url.startsWith("https://ibb.co/")) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please enter a valid imgbb.co URL")),
-      );
-      return;
-    }
-
-    if (!await _requestStoragePermission()) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Storage permission denied'),
-          action: SnackBarAction(
-            label: 'Settings',
-            onPressed: () => openAppSettings(),
-          ),
-        ),
-      );
+          const SnackBar(content: Text("Please enter a valid imgbb.co URL")));
       return;
     }
 
     setState(() {
-      _isDownloading = true;
-      _progress = 0.0;
-      _statusMessage = "Starting download...";
+      _isScraping = true;
+      _statusMessage = "Scraping page for download link...";
     });
 
     try {
       if (!(_headlessWebView?.isRunning() ?? false)) {
         await _headlessWebView?.run();
       }
-      _webViewController?.loadUrl(
-        urlRequest: URLRequest(url: WebUri(url)),
-      );
+
+      // Corrected: Added a null check for the webViewController
+      if (_webViewController != null) {
+        await _webViewController!.loadUrl(
+          urlRequest: URLRequest(url: WebUri(url)),
+        );
+      } else {
+        throw Exception("WebView controller is not available.");
+      }
     } catch (e) {
-      if (mounted) {
+      if(mounted) {
         setState(() {
-          _isDownloading = false;
+          _isScraping = false;
           _statusMessage = "Error: $e";
         });
       }
     }
   }
 
-  Future<void> _extractAndDownloadImage(
-      InAppWebViewController controller, String pageUrl) async {
-    try {
-      await Future.delayed(const Duration(seconds: 3));
+  Future<void> _extractImageLink(InAppWebViewController controller) async {
+    await Future.delayed(const Duration(seconds: 3));
+    final html = await controller.getHtml();
 
-      final String? html = await controller.getHtml();
-
-      if (html == null) {
-        throw "Could not get page content.";
-      }
-
-      final RegExp reg = RegExp(
-          r'https://i\.ibb\.co/[a-zA-Z0-9]+/[a-zA-Z0-9\-_]+\.(?:jpg|jpeg|png|gif|webp)');
-      final Match? match = reg.firstMatch(html);
-
-      if (match == null) {
-        throw "Download link not found on the page.";
-      }
-
-      final String downloadUrl = match.group(0)!;
-
-      if (mounted) {
+    if (html == null) {
+      if(mounted) {
         setState(() {
-          _statusMessage = "Download link found! Starting download...";
+          _isScraping = false;
+          _statusMessage = "Could not get page content.";
         });
       }
-
-      await _downloadFile(downloadUrl, pageUrl);
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isDownloading = false;
-          _statusMessage = "Error: $e";
-        });
-      }
+      return;
     }
-  }
 
-  Future<void> _downloadFile(String downloadUrl, String pageUrl) async {
-    final dio = Dio();
-    try {
-      final dir = await getApplicationDocumentsDirectory();
-      final filename = downloadUrl.split('/').last;
-      final savePath = "${dir.path}/$filename";
+    final regExp = RegExp(
+        r'https://i\.ibb\.co/[a-zA-Z0-9]+/[a-zA-Z0-9\-_]+\.(?:jpg|jpeg|png|gif|webp)');
+    final match = regExp.firstMatch(html);
 
-      await dio.download(
-        downloadUrl,
-        savePath,
-        onReceiveProgress: (received, total) {
-          if (total != -1 && mounted) {
-            setState(() {
-              _progress = received / total;
-              _statusMessage =
-              "Downloading... ${(_progress * 100).toStringAsFixed(0)}%";
-            });
-          }
-        },
-      );
+    if (match != null) {
+      final downloadUrl = match.group(0)!;
+      final downloadService = context.read<DownloadService>();
+      downloadService.startDownload(downloadUrl);
 
-      if (mounted) {
-        setState(() {
-          _isDownloading = false;
-          _statusMessage = "Download complete! Saved to $savePath";
-        });
+      if(mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text("Download started!"),
+          action: SnackBarAction(
+            label: "View",
+            onPressed: () {
+              // This relies on the PageController being available via Provider
+              // which we will set up in main.dart
+              try {
+                Provider.of<PageController>(context, listen: false).animateToPage(
+                  1, // Index of DownloadsPage
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeInOut,
+                );
+              } catch (e) {
+                print("Could not navigate to downloads page: $e");
+              }
+            },
+          ),
+        ));
       }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isDownloading = false;
-          _statusMessage = "Download failed: $e";
-        });
-      }
+
+    } else {
+      _statusMessage = "Download link not found.";
     }
-  }
 
-  Future<bool> _requestStoragePermission() async {
-    if (Platform.isAndroid) {
-      final deviceInfo = await DeviceInfoPlugin().androidInfo;
-      if (deviceInfo.version.sdkInt >= 30) {
-        return true;
-      }
+    if(mounted) {
+      setState(() { _isScraping = false; });
     }
-    var status = await Permission.storage.request();
-    return status.isGranted;
   }
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          TextField(
-            controller: _urlController,
-            decoration: const InputDecoration(
-              labelText: "Enter ImgBB Page URL",
-              border: OutlineInputBorder(),
-            ),
+    return Scaffold(
+      appBar: AppBar(title: const Text('New Download')),
+      body: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            children: [
+              TextField(
+                controller: _urlController,
+                decoration: const InputDecoration(
+                  labelText: "Enter ImgBB Page URL",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: _isScraping ? null : _startScraping,
+                child: _isScraping
+                    ? const CircularProgressIndicator(color: Colors.white)
+                    : const Text("Get Download Link"),
+              ),
+              if (_statusMessage != null) ...[
+                const SizedBox(height: 20),
+                Text(_statusMessage!),
+              ]
+            ],
           ),
-          const SizedBox(height: 20),
-          ElevatedButton(
-            onPressed: _isDownloading ? null : _startDownloadProcess,
-            child: const Text("Download Image"),
-          ),
-          const SizedBox(height: 20),
-          if (_isDownloading)
-            Column(
-              children: [
-                LinearProgressIndicator(value: _progress),
-                const SizedBox(height: 8),
-                Text(_statusMessage ?? ""),
-              ],
-            ),
-          if (!_isDownloading && _statusMessage != null)
-            Text(
-              _statusMessage!,
-              textAlign: TextAlign.center,
-            ),
-        ],
+        ),
       ),
     );
   }
