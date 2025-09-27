@@ -13,6 +13,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Hive.initFlutter();
   await Hive.openBox('thumbnails');
+  await Hive.openBox('downloaded_links');
   runApp(
     MultiProvider(
       providers: [

@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 
 enum DownloadStatus { downloading, paused, failed, completed }
 
@@ -24,15 +25,30 @@ class DownloadTask {
 class DownloadService with ChangeNotifier {
   final Dio _dio = Dio();
   final List<DownloadTask> _tasks = [];
-  static const _downloadedLinksKey = 'downloaded_links';
+  late Box _downloadedLinksBox;
 
   List<DownloadTask> get tasks => _tasks;
+
+  DownloadService() {
+    _init();
+  }
+
+  void _init() async {
+    if (!Hive.isBoxOpen('downloaded_links')) {
+      _downloadedLinksBox = await Hive.openBox('downloaded_links');
+    } else {
+      _downloadedLinksBox = Hive.box('downloaded_links');
+    }
+  }
 
   Future<String?> _getDownloadPath() async {
     final prefs = await SharedPreferences.getInstance();
     final customPath = prefs.getString('downloadPath');
     if (customPath != null) {
-      return customPath;
+      final dir = Directory(customPath);
+      if (await dir.exists()) {
+        return customPath;
+      }
     }
 
     Directory? directory;
@@ -50,7 +66,11 @@ class DownloadService with ChangeNotifier {
         }
       }
     } catch (err) {
-      print("Cannot get download directory: $err");
+      debugPrint("Cannot get download directory: $err");
+    }
+
+    if (directory != null && !await directory.exists()) {
+      await directory.create(recursive: true);
     }
     return directory?.path;
   }
@@ -60,36 +80,25 @@ class DownloadService with ChangeNotifier {
       return true;
     } else {
       var result = await permission.request();
-      if (result == PermissionStatus.granted) {
-        return true;
-      }
+      return result == PermissionStatus.granted;
     }
-    return false;
   }
 
   Future<bool> isDuplicateDownload(String url) async {
-    final prefs = await SharedPreferences.getInstance();
-    final downloadedLinks = prefs.getStringList(_downloadedLinksKey) ?? [];
-    return downloadedLinks.contains(url);
+    return _downloadedLinksBox.containsKey(url);
   }
 
   Future<void> _logDownload(String url) async {
-    final prefs = await SharedPreferences.getInstance();
-    final downloadedLinks = prefs.getStringList(_downloadedLinksKey) ?? [];
-    if (!downloadedLinks.contains(url)) {
-      downloadedLinks.add(url);
-      await prefs.setStringList(_downloadedLinksKey, downloadedLinks);
-    }
+    await _downloadedLinksBox.put(url, true);
   }
 
   Future<void> startDownload(String url) async {
     final downloadPath = await _getDownloadPath();
     if (downloadPath == null) {
-      // Handle permission denied
+      debugPrint("Download path is not available. Check permissions.");
       return;
     }
-    final fileName = url.split('/').last;
-    await Directory(downloadPath).create(recursive: true);
+    final fileName = url.split('/').last.replaceAll(RegExp(r'[/\\]'), '');
     final savePath = '$downloadPath/$fileName';
     final task =
     DownloadTask(id: const Uuid().v4(), url: url, savePath: savePath);
@@ -117,35 +126,36 @@ class DownloadService with ChangeNotifier {
         },
       );
 
-      task.status = DownloadStatus.completed;
-      _logDownload(task.url);
-      notifyListeners();
+      if (task.cancelToken.isCancelled) return;
 
-      Future.delayed(const Duration(seconds: 4), () {
-        _tasks.removeWhere((t) => t.id == task.id);
-        notifyListeners();
-      });
+      task.status = DownloadStatus.completed;
+      await _logDownload(task.url);
+
     } on DioException catch (e) {
       if (e.type == DioExceptionType.cancel) {
-        task.status = DownloadStatus.failed;
+        task.status = DownloadStatus.paused;
         task.errorMessage = 'Download cancelled';
       } else {
         task.status = DownloadStatus.failed;
-        task.errorMessage = 'Download failed';
+        task.errorMessage = 'Download failed: ${e.message}';
       }
     } catch (e) {
       task.status = DownloadStatus.failed;
       task.errorMessage = 'An unknown error occurred.';
     } finally {
+      // **CRITICAL FIX**: Do not auto-remove the task here.
+      // This was the source of the framework crash.
       notifyListeners();
     }
   }
 
   void cancelDownload(String taskId) {
-    final task = _tasks.firstWhere((t) => t.id == taskId);
-    task.cancelToken.cancel();
-    _tasks.removeWhere((t) => t.id == taskId);
-    notifyListeners();
+    final taskIndex = _tasks.indexWhere((t) => t.id == taskId);
+    if (taskIndex != -1) {
+      _tasks[taskIndex].cancelToken.cancel();
+      _tasks.removeAt(taskIndex);
+      notifyListeners();
+    }
   }
 
   void retryDownload(String taskId) {
