@@ -93,20 +93,39 @@ class DownloadService with ChangeNotifier {
   }
 
   Future<void> startDownload(String url) async {
+    debugPrint("Starting download for: $url");
+
     final downloadPath = await _getDownloadPath();
     if (downloadPath == null) {
       debugPrint("Download path is not available. Check permissions.");
       return;
     }
-    final fileName = url.split('/').last.replaceAll(RegExp(r'[/\\]'), '');
+
+    // Extract filename from URL and sanitize it
+    String fileName = url.split('/').last;
+    if (fileName.isEmpty) {
+      fileName = 'image_${DateTime.now().millisecondsSinceEpoch}';
+    }
+
+    // Remove any invalid characters
+    fileName = fileName.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+
+    // Ensure file has an extension
+    if (!fileName.contains('.')) {
+      fileName += '.jpg'; // Default extension
+    }
+
     final savePath = '$downloadPath/$fileName';
-    final task =
-    DownloadTask(id: const Uuid().v4(), url: url, savePath: savePath);
+    debugPrint("Save path: $savePath");
+
+    final task = DownloadTask(id: const Uuid().v4(), url: url, savePath: savePath);
 
     _tasks.add(task);
+    debugPrint("Task added to queue. Total tasks: ${_tasks.length}");
     notifyListeners();
 
-    _download(task);
+    // Start download immediately
+    await _download(task);
   }
 
   Future<void> _download(DownloadTask task) async {
