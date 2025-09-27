@@ -79,7 +79,7 @@ class _DownloadViewState extends State<DownloadView> with AutomaticKeepAliveClie
 
   final TextEditingController _urlController = TextEditingController();
   HeadlessInAppWebView? _headlessWebView;
-  final Dio _dio = Dio(); // For fast HTTP requests
+  late final Dio _dio;
   String? _statusMessage;
   bool _isFetching = false;
   bool _isDownloading = false;
@@ -90,6 +90,14 @@ class _DownloadViewState extends State<DownloadView> with AutomaticKeepAliveClie
   @override
   void initState() {
     super.initState();
+
+    // Initialize Dio with browser-like headers
+    _dio = Dio(BaseOptions(
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        }
+    ));
+
     _headlessWebView = HeadlessInAppWebView(
       onWebViewCreated: (controller) {},
       onLoadError: (controller, url, code, message) {
@@ -206,15 +214,15 @@ class _DownloadViewState extends State<DownloadView> with AutomaticKeepAliveClie
       });
 
       try {
-        await _scrapeWithDioAndQueue(image.pageUrl, downloadService);
+        await _scrapeAndQueue(image.pageUrl, downloadService);
 
         // Check if a new download was actually added
         if (downloadService.tasks.length > initialTaskCount + successCount) {
           successCount++;
         }
 
-        // Small delay to prevent overwhelming the server
-        await Future.delayed(const Duration(milliseconds: 500));
+        // Increased delay to prevent overwhelming the server
+        await Future.delayed(const Duration(seconds: 1));
       } catch (e) {
         debugPrint("Error processing ${image.pageUrl}: $e");
       }
@@ -239,8 +247,7 @@ class _DownloadViewState extends State<DownloadView> with AutomaticKeepAliveClie
             action: SnackBarAction(
               label: "View Downloads",
               onPressed: () {
-                // Navigate to downloads page
-                DefaultTabController.of(context)?.animateTo(1);
+                Navigator.of(context).pop('view_downloads');
               },
             ),
           ),
@@ -267,7 +274,7 @@ class _DownloadViewState extends State<DownloadView> with AutomaticKeepAliveClie
     final initialTaskCount = downloadService.tasks.length;
 
     try {
-      await _scrapeWithDioAndQueue(url, downloadService);
+      await _scrapeAndQueue(url, downloadService);
 
       if (mounted) {
         // Check if download was actually added
@@ -287,8 +294,7 @@ class _DownloadViewState extends State<DownloadView> with AutomaticKeepAliveClie
               action: SnackBarAction(
                 label: "View Downloads",
                 onPressed: () {
-                  // Navigate to downloads page - you might need to adjust this based on your navigation structure
-                  DefaultTabController.of(context)?.animateTo(1);
+                  Navigator.of(context).pop('view_downloads');
                 },
               ),
             ),
@@ -306,85 +312,100 @@ class _DownloadViewState extends State<DownloadView> with AutomaticKeepAliveClie
     }
   }
 
-  // **NEW EFFICIENT METHOD**
-  // **IMPROVED METHOD WITH BETTER ERROR HANDLING AND DEBUGGING**
-  Future<void> _scrapeWithDioAndQueue(String pageUrl, DownloadService downloadService) async {
-    try {
+  Future<void> _scrapeAndQueue(String pageUrl, DownloadService downloadService) async {
+    setState(() {
+      _statusMessage = "Fetching page: ${pageUrl.split('/').last}...";
+    });
+
+    String? html;
+    // Retry logic with Dio
+    for (int i = 0; i < 3; i++) {
+      try {
+        final response = await _dio.get<String>(pageUrl, options: Options(
+            headers: {
+              'Referer': 'https://imgbb.com/'
+            }
+        ));
+        html = response.data;
+        if (html != null) break;
+      } catch (e) {
+        debugPrint("Attempt ${i + 1} failed for $pageUrl: $e");
+        if (i < 2) await Future.delayed(const Duration(seconds: 2));
+      }
+    }
+
+    // WebView fallback
+    if (html == null) {
+      debugPrint("Dio failed, falling back to WebView for $pageUrl");
+      final controller = _headlessWebView?.webViewController;
+      if (controller != null) {
+        await controller.loadUrl(urlRequest: URLRequest(url: WebUri(pageUrl)));
+        await Future.delayed(const Duration(seconds: 3));
+        html = await controller.getHtml();
+      }
+    }
+
+    if (html == null || html.isEmpty) {
+      debugPrint("Could not get page content for $pageUrl");
       setState(() {
-        _statusMessage = "Fetching page: ${pageUrl.split('/').last}...";
+        _statusMessage = "Error: Empty response from $pageUrl";
       });
+      return;
+    }
 
-      final response = await _dio.get<String>(pageUrl);
-      final html = response.data;
+    // More comprehensive regex pattern to catch ImgBB direct image URLs
+    final regExp = RegExp(
+        r'https://i\.ibb\.co/[a-zA-Z0-9]+/[a-zA-Z0-9\-_.]+\.(?:jpg|jpeg|png|gif|webp|bmp|svg)',
+        caseSensitive: false
+    );
 
-      if (html == null || html.isEmpty) {
-        debugPrint("Could not get page content for $pageUrl");
-        setState(() {
-          _statusMessage = "Error: Empty response from $pageUrl";
-        });
-        return;
-      }
+    final matches = regExp.allMatches(html);
 
-      // More comprehensive regex pattern to catch ImgBB direct image URLs
-      final regExp = RegExp(
-          r'https://i\.ibb\.co/[a-zA-Z0-9]+/[a-zA-Z0-9\-_.]+\.(?:jpg|jpeg|png|gif|webp|bmp|svg)',
-          caseSensitive: false
-      );
+    if (matches.isEmpty) {
+      debugPrint("No image URLs found in HTML for $pageUrl");
+      // Try alternative patterns or methods
 
-      final matches = regExp.allMatches(html);
+      // Alternative: Look for meta property og:image
+      final ogImageRegex = RegExp(r'<meta property="og:image" content="([^"]+)"');
+      final ogMatch = ogImageRegex.firstMatch(html);
 
-      if (matches.isEmpty) {
-        debugPrint("No image URLs found in HTML for $pageUrl");
-        // Try alternative patterns or methods
+      if (ogMatch != null) {
+        final imageUrl = ogMatch.group(1)!;
+        debugPrint("Found og:image URL: $imageUrl");
 
-        // Alternative: Look for meta property og:image
-        final ogImageRegex = RegExp(r'<meta property="og:image" content="([^"]+)"');
-        final ogMatch = ogImageRegex.firstMatch(html);
-
-        if (ogMatch != null) {
-          final imageUrl = ogMatch.group(1)!;
-          debugPrint("Found og:image URL: $imageUrl");
-
-          if (!await downloadService.isDuplicateDownload(imageUrl)) {
-            await downloadService.startDownload(imageUrl);
-            debugPrint("Download started for: $imageUrl");
-          } else {
-            debugPrint("Duplicate download detected: $imageUrl");
-          }
+        if (!await downloadService.isDuplicateDownload(imageUrl)) {
+          await downloadService.startDownload(imageUrl);
+          debugPrint("Download started for: $imageUrl");
         } else {
-          setState(() {
-            _statusMessage = "No downloadable image found in: ${pageUrl.split('/').last}";
-          });
+          debugPrint("Duplicate download detected: $imageUrl");
         }
-        return;
-      }
-
-      // Process all found matches (in case there are multiple)
-      bool downloadStarted = false;
-      for (final match in matches) {
-        final downloadUrl = match.group(0)!;
-        debugPrint("Found image URL: $downloadUrl");
-
-        if (!await downloadService.isDuplicateDownload(downloadUrl)) {
-          await downloadService.startDownload(downloadUrl);
-          debugPrint("Download started for: $downloadUrl");
-          downloadStarted = true;
-          break; // Take the first valid URL
-        } else {
-          debugPrint("Duplicate download detected: $downloadUrl");
-        }
-      }
-
-      if (!downloadStarted) {
+      } else {
         setState(() {
-          _statusMessage = "All images already downloaded or no valid URLs found";
+          _statusMessage = "No downloadable image found in: ${pageUrl.split('/').last}";
         });
       }
+      return;
+    }
 
-    } catch (e) {
-      debugPrint("Error scraping $pageUrl with Dio: $e");
+    // Process all found matches (in case there are multiple)
+    bool downloadStarted = false;
+    for (final match in matches) {
+      final downloadUrl = match.group(0)!;
+      debugPrint("Found image URL: $downloadUrl");
+
+      if (!await downloadService.isDuplicateDownload(downloadUrl)) {
+        await downloadService.startDownload(downloadUrl);
+        debugPrint("Download started for: $downloadUrl");
+        downloadStarted = true;
+        break; // Take the first valid URL
+      } else {
+        debugPrint("Duplicate download detected: $downloadUrl");
+      }
+    }
+
+    if (!downloadStarted) {
       setState(() {
-        _statusMessage = "Error scraping: ${e.toString()}";
+        _statusMessage = "All images already downloaded or no valid URLs found";
       });
     }
   }

@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -21,7 +22,12 @@ class _StorageSettingPageState extends State<StorageSettingPage> {
 
   Future<void> _loadDownloadPath() async {
     final prefs = await SharedPreferences.getInstance();
-    final defaultPath = (await getApplicationDocumentsDirectory()).path;
+    String? defaultPath;
+    if (Platform.isAndroid) {
+      defaultPath = '/storage/emulated/0/Download/IMGbb Download';
+    } else {
+      defaultPath = (await getApplicationDocumentsDirectory()).path;
+    }
     setState(() {
       _downloadPath = prefs.getString('downloadPath') ?? defaultPath;
     });

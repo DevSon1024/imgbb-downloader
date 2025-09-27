@@ -55,6 +55,12 @@ class DownloadService with ChangeNotifier {
     try {
       if (Platform.isIOS) {
         directory = await getApplicationDocumentsDirectory();
+      } else if (Platform.isAndroid) {
+        if (await _requestPermission(Permission.storage)) {
+          directory = Directory('/storage/emulated/0/Download/IMGbb Download');
+        } else {
+          return null;
+        }
       } else {
         if (await _requestPermission(Permission.storage)) {
           Directory? downloadsDir = await getDownloadsDirectory();
@@ -162,8 +168,6 @@ class DownloadService with ChangeNotifier {
       task.status = DownloadStatus.failed;
       task.errorMessage = 'An unknown error occurred.';
     } finally {
-      // **CRITICAL FIX**: Do not auto-remove the task here.
-      // This was the source of the framework crash.
       notifyListeners();
     }
   }
