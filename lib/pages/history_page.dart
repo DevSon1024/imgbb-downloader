@@ -24,6 +24,7 @@ class _HistoryPageState extends State<HistoryPage> with WidgetsBindingObserver {
   bool _isGridView = true;
   ReceivePort? _receivePort;
   Box? _thumbnailBox;
+  final List<String> _thumbnailQueue = [];
 
   @override
   void initState() {
@@ -113,7 +114,7 @@ class _HistoryPageState extends State<HistoryPage> with WidgetsBindingObserver {
             setState(() {
               _images = files;
             });
-            _generateThumbnails();
+            _processThumbnailQueue();
           }
         }
       }
@@ -140,17 +141,37 @@ class _HistoryPageState extends State<HistoryPage> with WidgetsBindingObserver {
     return false;
   }
 
-  void _generateThumbnails() {
+  void _processThumbnailQueue() {
     for (var file in _images) {
       if (_thumbnailBox!.containsKey(file.path)) {
         setState(() {
           _thumbnails[file.path] = _thumbnailBox!.get(file.path);
         });
       } else if (!_thumbnails.containsKey(file.path)) {
-        Isolate.spawn(
-            generateThumbnail, ThumbnailRequest(file.path, _receivePort!.sendPort));
+        _thumbnailQueue.add(file.path);
       }
     }
+    _generateThumbnailsInBatches();
+  }
+
+  void _generateThumbnailsInBatches() {
+    const batchSize = 5;
+    if (_thumbnailQueue.isEmpty) {
+      return;
+    }
+
+    final batch = _thumbnailQueue.take(batchSize).toList();
+    _thumbnailQueue.removeRange(0, batch.length);
+
+    Isolate.spawn(
+        generateThumbnails, ThumbnailRequest(batch, _receivePort!.sendPort));
+
+    // Process the next batch after a short delay
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) {
+        _generateThumbnailsInBatches();
+      }
+    });
   }
 
   String _formatBytes(int bytes, int decimals) {

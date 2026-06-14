@@ -7,25 +7,29 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
-enum DownloadStatus { downloading, paused, failed, completed }
+enum DownloadStatus { downloading, paused, failed, completed, scraping }
 
 class DownloadTask {
   final String id;
-  final String url;
+  final String pageUrl; // The ImgBB page URL, used for retries
+  String? downloadUrl; // The direct image url, might expire
   final String savePath;
   double progress = 0.0;
-  DownloadStatus status = DownloadStatus.downloading;
+  int totalBytes = 0;
+  DownloadStatus status = DownloadStatus.scraping;
   CancelToken cancelToken = CancelToken();
   String? errorMessage;
 
-  DownloadTask({required this.id, required this.url, required this.savePath});
+  DownloadTask({required this.id, required this.pageUrl, this.downloadUrl, required this.savePath});
 }
 
 class DownloadService with ChangeNotifier {
   final Dio _dio = Dio();
   final List<DownloadTask> _tasks = [];
   late Box _downloadedLinksBox;
+  HeadlessInAppWebView? _headlessWebView;
 
   List<DownloadTask> get tasks => _tasks;
 
@@ -39,9 +43,11 @@ class DownloadService with ChangeNotifier {
     } else {
       _downloadedLinksBox = Hive.box('downloaded_links');
     }
+    _headlessWebView = HeadlessInAppWebView();
+    _headlessWebView?.run();
   }
 
-  Future<String?> _getDownloadPath() async {
+  Future<String?> getDownloadPath() async {
     final prefs = await SharedPreferences.getInstance();
     final customPath = prefs.getString('downloadPath');
     if (customPath != null) {
@@ -98,40 +104,62 @@ class DownloadService with ChangeNotifier {
     await _downloadedLinksBox.put(url, true);
   }
 
-  Future<void> startDownload(String url) async {
-    debugPrint("Starting download for: $url");
-
-    final downloadPath = await _getDownloadPath();
-    if (downloadPath == null) {
-      debugPrint("Download path is not available. Check permissions.");
+  Future<void> addDownload(String pageUrl) async {
+    if (await isDuplicateDownload(pageUrl)) {
+      print("Download is a duplicate");
       return;
     }
 
-    // Extract filename from URL and sanitize it
-    String fileName = url.split('/').last;
-    if (fileName.isEmpty) {
-      fileName = 'image_${DateTime.now().millisecondsSinceEpoch}';
+    final downloadPath = await getDownloadPath();
+    if (downloadPath == null) {
+      // Handle error: show a message to the user
+      return;
     }
-
-    // Remove any invalid characters
-    fileName = fileName.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
-
-    // Ensure file has an extension
-    if (!fileName.contains('.')) {
-      fileName += '.jpg'; // Default extension
-    }
-
+    final fileName = pageUrl.split('/').last + ".jpg";
     final savePath = '$downloadPath/$fileName';
-    debugPrint("Save path: $savePath");
-
-    final task = DownloadTask(id: const Uuid().v4(), url: url, savePath: savePath);
-
+    final task = DownloadTask(id: const Uuid().v4(), pageUrl: pageUrl, savePath: savePath);
     _tasks.add(task);
-    debugPrint("Task added to queue. Total tasks: ${_tasks.length}");
+    notifyListeners();
+    _scrapeAndDownload(task);
+  }
+
+  Future<void> _scrapeAndDownload(DownloadTask task) async {
+    task.status = DownloadStatus.scraping;
     notifyListeners();
 
-    // Start download immediately
-    await _download(task);
+    try {
+      final downloadUrl = await _scrapeImageLink(task.pageUrl);
+      if (downloadUrl != null) {
+        task.downloadUrl = downloadUrl;
+        _download(task);
+      } else {
+        task.status = DownloadStatus.failed;
+        task.errorMessage = "Could not find download link.";
+        notifyListeners();
+      }
+    } catch (e) {
+      task.status = DownloadStatus.failed;
+      task.errorMessage = "Scraping failed: $e";
+      notifyListeners();
+    }
+  }
+
+  Future<String?> _scrapeImageLink(String pageUrl) async {
+    final controller = _headlessWebView?.webViewController;
+    if (controller == null) {
+      return null;
+    }
+    await controller.loadUrl(urlRequest: URLRequest(url: WebUri(pageUrl)));
+    await Future.delayed(const Duration(seconds: 3)); // Wait for page to load
+    final html = await controller.getHtml();
+    if (html != null) {
+      final regExp = RegExp(
+          r'https://i\.ibb\.co/[a-zA-Z0-9]+/[a-zA-Z0-9\-_.]+\.(?:jpg|jpeg|png|gif|webp|bmp|svg)',
+          caseSensitive: false);
+      final match = regExp.firstMatch(html);
+      return match?.group(0);
+    }
+    return null;
   }
 
   Future<void> _download(DownloadTask task) async {
@@ -140,12 +168,13 @@ class DownloadService with ChangeNotifier {
       notifyListeners();
 
       await _dio.download(
-        task.url,
+        task.downloadUrl!,
         task.savePath,
         cancelToken: task.cancelToken,
         onReceiveProgress: (received, total) {
           if (total != -1 && task.status == DownloadStatus.downloading) {
             task.progress = received / total;
+            task.totalBytes = total;
             notifyListeners();
           }
         },
@@ -154,7 +183,7 @@ class DownloadService with ChangeNotifier {
       if (task.cancelToken.isCancelled) return;
 
       task.status = DownloadStatus.completed;
-      await _logDownload(task.url);
+      await _logDownload(task.pageUrl);
 
     } on DioException catch (e) {
       if (e.type == DioExceptionType.cancel) {
@@ -186,7 +215,7 @@ class DownloadService with ChangeNotifier {
     task.progress = 0.0;
     task.errorMessage = null;
     task.cancelToken = CancelToken();
-    _download(task);
+    _scrapeAndDownload(task);
   }
 
   void pauseDownload(String taskId) {
@@ -199,6 +228,10 @@ class DownloadService with ChangeNotifier {
   void resumeDownload(String taskId) {
     final task = _tasks.firstWhere((t) => t.id == taskId);
     task.cancelToken = CancelToken();
-    _download(task);
+    if (task.downloadUrl != null) {
+      _download(task);
+    } else {
+      _scrapeAndDownload(task);
+    }
   }
 }

@@ -3,20 +3,22 @@ import 'dart:isolate';
 import 'package:image/image.dart' as img;
 
 class ThumbnailRequest {
-  final String filePath;
+  final List<String> filePaths;
   final SendPort sendPort;
 
-  ThumbnailRequest(this.filePath, this.sendPort);
+  ThumbnailRequest(this.filePaths, this.sendPort);
 }
 
-void generateThumbnail(ThumbnailRequest request) {
-  final file = File(request.filePath);
-  if (file.existsSync()) {
-    final imageBytes = file.readAsBytesSync();
-    final image = img.decodeImage(imageBytes);
-    if (image != null) {
-      final thumbnail = img.copyResize(image, width: 120);
-      request.sendPort.send({'filePath': request.filePath, 'thumbnail': img.encodeJpg(thumbnail)});
+void generateThumbnails(ThumbnailRequest request) {
+  for (var filePath in request.filePaths) {
+    final file = File(filePath);
+    if (file.existsSync()) {
+      final imageBytes = file.readAsBytesSync();
+      final image = img.decodeImage(imageBytes);
+      if (image != null) {
+        final thumbnail = img.copyResize(image, width: 120);
+        request.sendPort.send({'filePath': filePath, 'thumbnail': img.encodeJpg(thumbnail)});
+      }
     }
   }
 }

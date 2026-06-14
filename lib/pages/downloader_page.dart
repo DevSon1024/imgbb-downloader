@@ -79,10 +79,8 @@ class _DownloadViewState extends State<DownloadView> with AutomaticKeepAliveClie
 
   final TextEditingController _urlController = TextEditingController();
   HeadlessInAppWebView? _headlessWebView;
-  late final Dio _dio;
   String? _statusMessage;
   bool _isFetching = false;
-  bool _isDownloading = false;
 
   List<ScrapedImage> _scrapedImages = [];
   bool _selectAll = false;
@@ -90,21 +88,12 @@ class _DownloadViewState extends State<DownloadView> with AutomaticKeepAliveClie
   @override
   void initState() {
     super.initState();
-
-    // Initialize Dio with browser-like headers
-    _dio = Dio(BaseOptions(
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        }
-    ));
-
     _headlessWebView = HeadlessInAppWebView(
       onWebViewCreated: (controller) {},
       onLoadError: (controller, url, code, message) {
         if (mounted) {
           setState(() {
             _isFetching = false;
-            _isDownloading = false;
             _statusMessage = "Error loading page: $message";
           });
         }
@@ -154,7 +143,6 @@ class _DownloadViewState extends State<DownloadView> with AutomaticKeepAliveClie
     }
 
     await controller.loadUrl(urlRequest: URLRequest(url: WebUri(url)));
-
     await controller.evaluateJavascript(source: '''
       (async () => {
         const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -199,61 +187,11 @@ class _DownloadViewState extends State<DownloadView> with AutomaticKeepAliveClie
       return;
     }
 
-    setState(() { _isDownloading = true; });
-
-    int count = 0;
-    int successCount = 0;
     final downloadService = context.read<DownloadService>();
-    final initialTaskCount = downloadService.tasks.length;
-
     for (final image in selectedImages) {
-      if (!mounted) break;
-      count++;
-      setState(() {
-        _statusMessage = "Processing ${count}/${selectedImages.length}: ${image.pageUrl.split('/').last}";
-      });
-
-      try {
-        await _scrapeAndQueue(image.pageUrl, downloadService);
-
-        // Check if a new download was actually added
-        if (downloadService.tasks.length > initialTaskCount + successCount) {
-          successCount++;
-        }
-
-        // Increased delay to prevent overwhelming the server
-        await Future.delayed(const Duration(seconds: 1));
-      } catch (e) {
-        debugPrint("Error processing ${image.pageUrl}: $e");
-      }
+      downloadService.addDownload(image.pageUrl);
     }
-
-    if (mounted) {
-      setState(() {
-        _isDownloading = false;
-        _statusMessage = "$successCount out of ${selectedImages.length} downloads queued successfully.";
-
-        // Clear selections
-        for (var img in _scrapedImages) {
-          img.isSelected = false;
-        }
-        _selectAll = false;
-      });
-
-      if (successCount > 0) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("$successCount downloads started! Check the Downloads tab."),
-            action: SnackBarAction(
-              label: "View Downloads",
-              onPressed: () {
-                Navigator.of(context).pop('view_downloads');
-              },
-            ),
-          ),
-        );
-      }
-    }
+    Navigator.of(context).pop('view_downloads');
   }
 
   Future<void> _startSingleImageDownload() async {
@@ -264,150 +202,8 @@ class _DownloadViewState extends State<DownloadView> with AutomaticKeepAliveClie
       );
       return;
     }
-
-    setState(() {
-      _isDownloading = true;
-      _statusMessage = "Scraping image...";
-    });
-
-    final downloadService = context.read<DownloadService>();
-    final initialTaskCount = downloadService.tasks.length;
-
-    try {
-      await _scrapeAndQueue(url, downloadService);
-
-      if (mounted) {
-        // Check if download was actually added
-        final downloadAdded = downloadService.tasks.length > initialTaskCount;
-
-        setState(() {
-          _isDownloading = false;
-          _statusMessage = downloadAdded
-              ? "Download queued! View progress in the Downloads tab."
-              : "Image already downloaded or could not be processed.";
-        });
-
-        if (downloadAdded) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text("Download started! Check the Downloads tab."),
-              action: SnackBarAction(
-                label: "View Downloads",
-                onPressed: () {
-                  Navigator.of(context).pop('view_downloads');
-                },
-              ),
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isDownloading = false;
-          _statusMessage = "Error: ${e.toString()}";
-        });
-      }
-      debugPrint("Error in single image download: $e");
-    }
-  }
-
-  Future<void> _scrapeAndQueue(String pageUrl, DownloadService downloadService) async {
-    setState(() {
-      _statusMessage = "Fetching page: ${pageUrl.split('/').last}...";
-    });
-
-    String? html;
-    // Retry logic with Dio
-    for (int i = 0; i < 3; i++) {
-      try {
-        final response = await _dio.get<String>(pageUrl, options: Options(
-            headers: {
-              'Referer': 'https://imgbb.com/'
-            }
-        ));
-        html = response.data;
-        if (html != null) break;
-      } catch (e) {
-        debugPrint("Attempt ${i + 1} failed for $pageUrl: $e");
-        if (i < 2) await Future.delayed(const Duration(seconds: 2));
-      }
-    }
-
-    // WebView fallback
-    if (html == null) {
-      debugPrint("Dio failed, falling back to WebView for $pageUrl");
-      final controller = _headlessWebView?.webViewController;
-      if (controller != null) {
-        await controller.loadUrl(urlRequest: URLRequest(url: WebUri(pageUrl)));
-        await Future.delayed(const Duration(seconds: 3));
-        html = await controller.getHtml();
-      }
-    }
-
-    if (html == null || html.isEmpty) {
-      debugPrint("Could not get page content for $pageUrl");
-      setState(() {
-        _statusMessage = "Error: Empty response from $pageUrl";
-      });
-      return;
-    }
-
-    // More comprehensive regex pattern to catch ImgBB direct image URLs
-    final regExp = RegExp(
-        r'https://i\.ibb\.co/[a-zA-Z0-9]+/[a-zA-Z0-9\-_.]+\.(?:jpg|jpeg|png|gif|webp|bmp|svg)',
-        caseSensitive: false
-    );
-
-    final matches = regExp.allMatches(html);
-
-    if (matches.isEmpty) {
-      debugPrint("No image URLs found in HTML for $pageUrl");
-      // Try alternative patterns or methods
-
-      // Alternative: Look for meta property og:image
-      final ogImageRegex = RegExp(r'<meta property="og:image" content="([^"]+)"');
-      final ogMatch = ogImageRegex.firstMatch(html);
-
-      if (ogMatch != null) {
-        final imageUrl = ogMatch.group(1)!;
-        debugPrint("Found og:image URL: $imageUrl");
-
-        if (!await downloadService.isDuplicateDownload(imageUrl)) {
-          await downloadService.startDownload(imageUrl);
-          debugPrint("Download started for: $imageUrl");
-        } else {
-          debugPrint("Duplicate download detected: $imageUrl");
-        }
-      } else {
-        setState(() {
-          _statusMessage = "No downloadable image found in: ${pageUrl.split('/').last}";
-        });
-      }
-      return;
-    }
-
-    // Process all found matches (in case there are multiple)
-    bool downloadStarted = false;
-    for (final match in matches) {
-      final downloadUrl = match.group(0)!;
-      debugPrint("Found image URL: $downloadUrl");
-
-      if (!await downloadService.isDuplicateDownload(downloadUrl)) {
-        await downloadService.startDownload(downloadUrl);
-        debugPrint("Download started for: $downloadUrl");
-        downloadStarted = true;
-        break; // Take the first valid URL
-      } else {
-        debugPrint("Duplicate download detected: $downloadUrl");
-      }
-    }
-
-    if (!downloadStarted) {
-      setState(() {
-        _statusMessage = "All images already downloaded or no valid URLs found";
-      });
-    }
+    context.read<DownloadService>().addDownload(url);
+    Navigator.of(context).pop('view_downloads');
   }
 
   @override
@@ -436,15 +232,15 @@ class _DownloadViewState extends State<DownloadView> with AutomaticKeepAliveClie
 
             if (widget.isAlbum)
               ElevatedButton(
-                onPressed: _isFetching || _isDownloading ? null : _fetchAlbumImages,
+                onPressed: _isFetching ? null : _fetchAlbumImages,
                 style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 15)),
                 child: _isFetching ? const CircularProgressIndicator(color: Colors.white) : const Text("Fetch Images"),
               )
             else
               ElevatedButton(
-                onPressed: _isDownloading ? null : _startSingleImageDownload,
+                onPressed: _startSingleImageDownload,
                 style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 15)),
-                child: _isDownloading ? const CircularProgressIndicator(color: Colors.white) : const Text("Download Image"),
+                child: const Text("Download Image"),
               ),
 
             if (_statusMessage != null) ...[
@@ -514,9 +310,9 @@ class _DownloadViewState extends State<DownloadView> with AutomaticKeepAliveClie
               ),
               const SizedBox(height: 20),
               ElevatedButton(
-                onPressed: _isDownloading || _isFetching ? null : _startAlbumDownload,
+                onPressed: _isFetching ? null : _startAlbumDownload,
                 style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.primary, foregroundColor: Theme.of(context).colorScheme.onPrimary, padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 15)),
-                child: _isDownloading ? const CircularProgressIndicator(color: Colors.white) : const Text("Download Selected"),
+                child: const Text("Download Selected"),
               )
             ]
           ],
